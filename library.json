@@ -1,0 +1,14 @@
+{
+  "name": "ESP32MotorControl",
+  "keywords": "ESP32, Motor, H-bridge, MCPWM",
+  "description": "Motor control using ESP32 MCPWM",
+  "repository":
+  {
+    "type": "git",
+    "url": "https://github.com/JoaoLopesF/ESP32MotorControl.git"
+  },
+  "version": "0.1.0",
+  "frameworks": "arduino",
+  "platforms": "*"
+}
+
