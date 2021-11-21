@@ -7,10 +7,13 @@
  * Versions  :
  * ------ 	---------- 		-------------------------
  * 0.1.0  	2018-12-26		First beta
+ * 0.2.0  	2021-11-21		Revision by Karol Pieniacy
  *****************************************/
 
 /*
  * Source for ESP32MotorControl
+ *
+ * Copyright (C) 2021  Karol Pieniacy https://github.com/pieniacy/ESP32MotorControl
  *
  * Copyright (C) 2018  Joao Lopes https://github.com/JoaoLopesF/ESP32MotorControl
  *
@@ -30,317 +33,166 @@
  *
  */
 
-/*
- * TODO list:
- * - Port to L298
- */
-
-/*
- * TODO known issues:
- */
-
-////// Includes
-
-#include "Arduino.h"
-
 #include "ESP32MotorControl.h"
 
-#include <stdio.h>
+#include <cmath>
 
-#include "esp_system.h"
-#include "esp_attr.h"
-
+#include "Arduino.h"
 #include "driver/mcpwm.h"
+#include "esp_attr.h"
+#include "esp_system.h"
 #include "soc/mcpwm_reg.h"
 #include "soc/mcpwm_struct.h"
 
-///// Defines
-
-// debug
-
-//#define debug(fmt, ...)
-#define debug(fmt, ...) Serial.printf("%s: " fmt "\r\n", __func__, ##__VA_ARGS__)
-
-///// Methods
-
-///// Driver with 4 pins: DRV88nn, DRV8833, DRV8825, etc.
-
-// Attach one motor
-
-void ESP32MotorControl::attachMotor(uint8_t gpioIn1, uint8_t gpioIn2)
+namespace {
+inline constexpr mcpwm_unit_t MCPWM_UNIT(uint8_t motor)
 {
-	attachMotors(gpioIn1, gpioIn2, 0, 0);
+	return motor == 0 ? MCPWM_UNIT_0 : MCPWM_UNIT_1;
+}
+inline constexpr mcpwm_timer_t MCPWM_TIMER(uint8_t motor)
+{
+	return motor == 0 ? MCPWM_TIMER_0 : MCPWM_TIMER_1;
 }
 
-// Attach two motors
-
-void ESP32MotorControl::attachMotors(uint8_t gpioIn1, uint8_t gpioIn2, uint8_t gpioIn3, uint8_t gpioIn4)
+void setMotorNoPWM(uint8_t motor, int8_t dir)
 {
-	// debug
+	if (dir > 0) {
+		// Full forward
+		mcpwm_set_signal_low(MCPWM_UNIT(motor), MCPWM_TIMER(motor), MCPWM_OPR_B);
+		mcpwm_set_signal_high(MCPWM_UNIT(motor), MCPWM_TIMER(motor), MCPWM_OPR_A);
+	} else if (dir < 0) {
+		// Full reverse
+		mcpwm_set_signal_low(MCPWM_UNIT(motor), MCPWM_TIMER(motor), MCPWM_OPR_A);
+		mcpwm_set_signal_high(MCPWM_UNIT(motor), MCPWM_TIMER(motor), MCPWM_OPR_B);
+	} else {
+		// Stop
+		mcpwm_set_signal_low(MCPWM_UNIT(motor), MCPWM_TIMER(motor), MCPWM_OPR_A);
+		mcpwm_set_signal_low(MCPWM_UNIT(motor), MCPWM_TIMER(motor), MCPWM_OPR_B);
+	}
+}
 
-	debug("init MCPWM Motor 0");
+void setMotorPWM(uint8_t motor, int8_t speed)
+{
+	if (speed == 0 || speed == -100 || speed == 100) {
+		setMotorNoPWM(motor, speed);
+		return;
+	}
 
+	if (speed > 0) {
+		mcpwm_set_signal_low(MCPWM_UNIT(motor), MCPWM_TIMER(motor), MCPWM_OPR_B);
+		mcpwm_set_duty(MCPWM_UNIT(motor), MCPWM_TIMER(motor), MCPWM_OPR_A, speed);
+		// call the following each time, in case we used mcpwm_set_signal_low/high
+		mcpwm_set_duty_type(MCPWM_UNIT(motor), MCPWM_TIMER(motor), MCPWM_OPR_A, MCPWM_DUTY_MODE_0);
+	} else {
+		mcpwm_set_signal_low(MCPWM_UNIT(motor), MCPWM_TIMER(motor), MCPWM_OPR_A);
+		mcpwm_set_duty(MCPWM_UNIT(motor), MCPWM_TIMER(motor), MCPWM_OPR_B, -speed);
+		// call the following each time, in case we used mcpwm_set_signal_low/high
+		mcpwm_set_duty_type(MCPWM_UNIT(motor), MCPWM_TIMER(motor), MCPWM_OPR_B, MCPWM_DUTY_MODE_0);
+	}
+}
+
+}  // namespace
+
+void ESP32MotorControl::attachMotor(uint8_t gpioIn1, uint8_t gpioIn2, uint32_t frequencyHz)
+{
+	attachMotors(gpioIn1, gpioIn2, 0, 0, frequencyHz);
+}
+
+void ESP32MotorControl::attachMotors(uint8_t gpioIn1, uint8_t gpioIn2, uint8_t gpioIn3,
+                                     uint8_t gpioIn4, uint32_t frequencyHz)
+{
 	// Attach motor 0 input pins.
-
-	// Set MCPWM unit 0
-
-    mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, gpioIn1);
-    mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0B, gpioIn2);
+	mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, gpioIn1);
+	mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0B, gpioIn2);
 
 	// Indicate the motor 0 is attached.
+	this->mMotorAttached_[0] = true;
 
-	this->mMotorAttached[0] = true;
-
-	// Attach motor 1 input pins.
-
-	if (!(gpioIn3 == 0 && gpioIn4 ==0)) {
-
-		debug("init MCPWM Motor 1");
-
-		// Set MCPWM unit 1
-    
+	if (!(gpioIn3 == 0 && gpioIn4 == 0)) {
+		// Attach motor 1 input pins.
 		mcpwm_gpio_init(MCPWM_UNIT_1, MCPWM1A, gpioIn3);
-    	mcpwm_gpio_init(MCPWM_UNIT_1, MCPWM1B, gpioIn4);
+		mcpwm_gpio_init(MCPWM_UNIT_1, MCPWM1B, gpioIn4);
 
 		// Indicate the motor 1 is attached.
-
-		this->mMotorAttached[1] = true;
+		this->mMotorAttached_[1] = true;
 	}
 
-    // Initial MCPWM configuration
+	// Initial MCPWM configuration
+	mcpwm_config_t cfg;
+	cfg.frequency = frequencyHz;
+	cfg.cmpr_a = 0;
+	cfg.cmpr_b = 0;
+	cfg.counter_mode = MCPWM_UP_COUNTER;
+	cfg.duty_mode = MCPWM_DUTY_MODE_0;
 
-    debug ("Configuring Initial Parameters of MCPWM...");
+	// Configure PWM0A & PWM0B with above settings
+	mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_0, &cfg);
 
-    mcpwm_config_t pwm_config;
-    pwm_config.frequency = 1000;    //frequency,
-    pwm_config.cmpr_a = 0;    		//duty cycle of PWMxA = 0
-    pwm_config.cmpr_b = 0;    		//duty cycle of PWMxb = 0
-    pwm_config.counter_mode = MCPWM_UP_COUNTER;
-    pwm_config.duty_mode = MCPWM_DUTY_MODE_0;
-
-    mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_0, &pwm_config);    //Configure PWM0A & PWM0B with above settings
-
-    mcpwm_init(MCPWM_UNIT_1, MCPWM_TIMER_1, &pwm_config);    //Configure PWM1A & PWM1B with above settings
-
-	debug ("MCPWM initialized");
+	// Configure PWM1A & PWM1B with above settings
+	mcpwm_init(MCPWM_UNIT_1, MCPWM_TIMER_1, &cfg);
 }
 
-// Motor full forward
+void ESP32MotorControl::motorForward(uint8_t motor, uint8_t speed) { setMotor_(motor, speed); }
 
-void ESP32MotorControl::motorFullForward(uint8_t motor)
-{
-	if (!isMotorValid(motor)) {
-		return;
-	}
+void ESP32MotorControl::motorReverse(uint8_t motor, uint8_t speed) { setMotor_(motor, -speed); }
 
-	// Full forward
+void ESP32MotorControl::motorFullForward(uint8_t motor) { setMotor_(motor, 100); }
 
-	if (motor == 0) {
+void ESP32MotorControl::motorFullReverse(uint8_t motor) { setMotor_(motor, -100); }
 
-		mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B);
-		mcpwm_set_signal_high(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A);
-
-	} else {
-
-		mcpwm_set_signal_low(MCPWM_UNIT_1, MCPWM_TIMER_1, MCPWM_OPR_B);
-		mcpwm_set_signal_high(MCPWM_UNIT_1, MCPWM_TIMER_1, MCPWM_OPR_A);
-	}
-
-	mMotorSpeed[motor] = 100; // Save it
-	mMotorForward[motor] = true;
-
-	debug ("Motor %u full forward", motor);
-}
-
-// Motor set speed forward
-
-void ESP32MotorControl::motorForward(uint8_t motor, uint8_t speed)
-{
-	if (!isMotorValid(motor)) {
-		return;
-	}
-
-	if (speed == 100) { // Full speed
-
-		motorFullForward(motor);
-
-	} else {
-
-		// Set speed -> PWM duty 0-100
-
-		if (motor == 0) {
-
-			mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B);
-			mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A, speed);
-			mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A, MCPWM_DUTY_MODE_0); //call this each time, if operator was previously in low/high state
-
-		} else {
-
-			mcpwm_set_signal_low(MCPWM_UNIT_1, MCPWM_TIMER_1, MCPWM_OPR_B);
-			mcpwm_set_duty(MCPWM_UNIT_1, MCPWM_TIMER_1, MCPWM_OPR_A, speed);
-			mcpwm_set_duty_type(MCPWM_UNIT_1, MCPWM_TIMER_1, MCPWM_OPR_A, MCPWM_DUTY_MODE_0); //call this each time, if operator was previously in low/high state
-
-		}
-
-		mMotorSpeed[motor] = speed; // Save it
-		mMotorForward[motor] = true;
-
-		debug("Motor %u forward speed %u", motor, speed);
-	}
-}
-
-void ESP32MotorControl::motorFullReverse(uint8_t motor)
-{
-	if (!isMotorValid(motor)) {
-		return;
-	}
-
-	// Full forward
-
-	if (motor == 0) {
-
-		mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A);
-		mcpwm_set_signal_high(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B);
-
-	} else {
-
-		mcpwm_set_signal_low(MCPWM_UNIT_1, MCPWM_TIMER_1, MCPWM_OPR_A);
-		mcpwm_set_signal_high(MCPWM_UNIT_1, MCPWM_TIMER_1, MCPWM_OPR_B);
-	}
-
-	mMotorSpeed[motor] = 100; // Save it
-	mMotorForward[motor] = false;
-
-	debug ("Motor %u full reverse", motor);
-}
-
-// Motor set speed reverse
-
-void ESP32MotorControl::motorReverse(uint8_t motor, uint8_t speed)
-{
-	if (!isMotorValid(motor)) {
-		return;
-	}
-
-	if (speed == 100) { // Full speed
-
-		motorFullReverse(motor);
-
-	} else {
-
-
-		// Set speed -> PWM duty 0-100
-
-		if (motor == 0) {
-
-			mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A);
-			mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B, speed);
-			mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B, MCPWM_DUTY_MODE_0); //call this each time, if operator was previously in low/high state
-
-		} else {
-
-			mcpwm_set_signal_low(MCPWM_UNIT_1, MCPWM_TIMER_1, MCPWM_OPR_A);
-			mcpwm_set_duty(MCPWM_UNIT_1, MCPWM_TIMER_1, MCPWM_OPR_B, speed);
-			mcpwm_set_duty_type(MCPWM_UNIT_1, MCPWM_TIMER_1, MCPWM_OPR_B, MCPWM_DUTY_MODE_0); //call this each time, if operator was previously in low/high state
-
-		}
-
-		mMotorSpeed[motor] = speed; // Save it
-		mMotorForward[motor] = false;
-
-		debug("Motor %u reverse speed %u", motor, speed);
-	}
-}
-
-
-// Motor stop
-
-void ESP32MotorControl::motorStop(uint8_t motor)
-{
-	if (!isMotorValid(motor)) {
-		return;
-	}
-
-	// Motor stop
-
-	if (motor == 0) {
-
-		mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A);
-		mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B);
-
-	} else {
-
-		mcpwm_set_signal_low(MCPWM_UNIT_1, MCPWM_TIMER_1, MCPWM_OPR_A);
-		mcpwm_set_signal_low(MCPWM_UNIT_1, MCPWM_TIMER_1, MCPWM_OPR_B);
-
-	}
-
-	mMotorSpeed[motor] = 0; // Save it
-	mMotorForward[motor] = true; // For stop
-
-	debug("Motor %u stop", motor);
-}
-
-// Motors stop
+void ESP32MotorControl::motorStop(uint8_t motor) { setMotor_(motor, 0); }
 
 void ESP32MotorControl::motorsStop()
 {
-	motorStop(0);
-	motorStop(1);
-
-	debug("Motors stop");
+	setMotor_(0, 0);
+	setMotor_(1, 0);
 }
 
-// Get motor speed
+void ESP32MotorControl::motorsSet(int8_t speed0, int8_t speed1)
+{
+	setMotor_(0, speed0);
+	setMotor_(1, speed1);
+}
 
-uint8_t ESP32MotorControl::getMotorSpeed(uint8_t motor) {
-
-	if (!isMotorValid(motor)) {
+uint8_t ESP32MotorControl::getMotorSpeed(uint8_t motor)
+{
+	if (!isMotorValid_(motor))
 		return false;
-	}
+
 	return mMotorSpeed[motor];
-
 }
 
-// Is motor in forward ?
-
-boolean ESP32MotorControl::isMotorForward(uint8_t motor) {
-	
-	if (!isMotorValid(motor)) {
+boolean ESP32MotorControl::isMotorForward(uint8_t motor)
+{
+	if (!isMotorValid_(motor) || isMotorStopped(motor))
 		return false;
-	}
 
-	if (isMotorStopped(motor)) {
-		return false;
-	} else {
-		return mMotorForward[motor];
-	}
+	return mMotorForward[motor];
 }
 
-// Is motor stopped ?
-
-boolean ESP32MotorControl::isMotorStopped(uint8_t motor) {
-	
-
-	if (!isMotorValid(motor)) {
+boolean ESP32MotorControl::isMotorStopped(uint8_t motor)
+{
+	if (!isMotorValid_(motor))
 		return true;
-	}
+
 	return (mMotorSpeed[motor] == 0);
 }
 
-//// Privates
+void ESP32MotorControl::setMotor_(uint8_t motor, int8_t speed)
+{
+	if (!isMotorValid_(motor) || speed > 100 || speed < -100)
+		return;
 
-// Is motor valid ?
+	setMotorPWM(motor, speed);
 
-boolean ESP32MotorControl::isMotorValid(uint8_t motor) {
-
-
-	if (motor > 1) {
-		return false;
-	}
-
-	return mMotorAttached[motor];
+	mMotorSpeed[motor] = std::abs(speed);
+	mMotorForward[motor] = speed > 0;
 }
 
+boolean ESP32MotorControl::isMotorValid_(uint8_t motor)
+{
+	if (motor > 1)
+		return false;
 
-///// End
+	return mMotorAttached_[motor];
+}

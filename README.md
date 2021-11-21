@@ -1,16 +1,12 @@
 # ESP32MotorControl
 Motor control using ESP32 MCPWM
 
-<a href="#releases">![build badge](https://img.shields.io/badge/version-v0.1.0-blue.svg)</a> 
-<a href="https://github.com/JoaoLopesF/ESP32MotorControl/blob/master/LICENSE.txt">![GitHub](https://img.shields.io/github/license/mashape/apistatus.svg)</a>
-
 ### A library to ESP32 control motors using MCPWM
 
-#### Works only with ESP32. 
+#### Works only with ESP32.
 
 ## Contents
  - [About](#about)
- - [Wishlist](#wishlist)
  - [Using](#usage)
  - [Releases](#releases)
 
@@ -43,7 +39,7 @@ ESP32MotorControl MotorControl = ESP32MotorControl();
 ```
 ###setup
 
-- In the setup function 
+- In the setup function
 ```cpp
 
 // Attach 2 motors
@@ -65,6 +61,7 @@ MotorControl.motorForward(0, speed);
 MotorControl.motorReverse(0, speed);
 MotorControl.motorForward(1, speed);
 MotorControl.motorReverse(1, speed);
+MotorControl.motorsSet(75, -75);
 
 // To get info about motors
 
@@ -78,4 +75,6 @@ stopped = isMotorStopped(0);
 
 #### 0.1
 - First Beta
+#### 0.2
+- Revision by Karol Pieniący
 
