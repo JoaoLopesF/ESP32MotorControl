@@ -29,7 +29,7 @@
 	#error "this library is only for ESP32"
 #endif
 
-#define PWM_FREQ 1000	// PWM Frequency		
+#define PWM_FREQ 50	// PWM Frequency		
 
 //////// Class
 
@@ -48,7 +48,7 @@ public:
 	void attachMotors(uint8_t gpioIn1, uint8_t gpioIn2, uint8_t gpioIn3, uint8_t gpioIn4);
 
 	void motorFullForward(uint8_t motor);
-	void motorForward(uint8_t motor, uint8_t speed);
+	void motorForward(uint8_t motor, float speed);
 	void motorFullReverse(uint8_t motor);
 	void motorReverse(uint8_t motor, uint8_t speed);
 	void motorStop(uint8_t motor);

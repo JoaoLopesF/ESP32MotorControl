@@ -112,7 +112,7 @@ void ESP32MotorControl::attachMotors(uint8_t gpioIn1, uint8_t gpioIn2, uint8_t g
     debug ("Configuring Initial Parameters of MCPWM...");
 
     mcpwm_config_t pwm_config;
-    pwm_config.frequency = 1000;    //frequency,
+    pwm_config.frequency = PWM_FREQ;    //frequency,
     pwm_config.cmpr_a = 0;    		//duty cycle of PWMxA = 0
     pwm_config.cmpr_b = 0;    		//duty cycle of PWMxb = 0
     pwm_config.counter_mode = MCPWM_UP_COUNTER;
@@ -154,7 +154,7 @@ void ESP32MotorControl::motorFullForward(uint8_t motor)
 
 // Motor set speed forward
 
-void ESP32MotorControl::motorForward(uint8_t motor, uint8_t speed)
+void ESP32MotorControl::motorForward(uint8_t motor, float speed)
 {
 	if (!isMotorValid(motor)) {
 		return;
